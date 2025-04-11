@@ -18,8 +18,11 @@ MacOS(M1/M2 포함)에서 Conda 환경과 CoreML을 활용하여, 누구나 쉽�
 ## 💻 설치 및 실행 방법
 
 # 1. GitHub 저장소 클론
+
+```bash
 git clone https://github.com/MuseBlossom-Development/deepvoice-stt-VoiceSpliter.git
 cd deepvoice-stt-VoiceSpliter
+```
 
 
 ## ⚠️ Whisper 모델 파일은 직접 받아야 합니다
@@ -33,10 +36,17 @@ Whisper 모델 파일은 **용량 문제로 GitHub에 포함되지 않았습니�
  `resources/ggml-large-v3-turbo-encoder.mlmodelc/` *(디렉토리 전체)*
 
 # 3. 실행 권한 부여
+
+```bash
 chmod +x setup_and_run.sh
+```
+
 
 # 4. 설치 및 실행
+
+```bash
 ./setup_and_run.sh
+```
 
 ## 동작 개요
 
@@ -50,15 +60,17 @@ graph TD
     D --> E[STT_Voice_Spliter 실행]
 ```
 
-## 디렉토리 구조
+## 📁 디렉토리 구조
+
+```bash
 stt-voice-splitter/
-├── install_and_run.sh                # 설치 및 실행 스크립트
-├── STT_Voice_Spliter.py             # GUI 메인 코드
-├── resources/                       # 모델 및 인코더 위치
+├── setup_and_run.sh                 # 설치 및 실행 스크립트
+├── STT_Voice_Spliter.py            # GUI 메인 코드
+├── resources/                      # 모델 및 인코더 위치
 │   ├── ggml-large-v3-turbo.bin
 │   └── ggml-large-v3-turbo-encoder.mlmodelc/
-├── config.json                      # VAD 설정 파일
-└── split_audio/                     # 오디오 분할 및 필사 결과 폴더
+├── config.json                     # VAD 설정 파일
+└── split_audio/                    # 오디오 분할 및 필사 결과 폴더
 
 
 | 분류         | 기술 내용                                     |
@@ -69,3 +81,4 @@ stt-voice-splitter/
 | **오디오 처리** | FFmpeg                                    |
 | **모델 추론**| CoreML (macOS M1/M2 최적화용)               |
 | **패키지 관리자** | Conda / Homebrew                        |
+```
