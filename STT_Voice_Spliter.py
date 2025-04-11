@@ -21,9 +21,13 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
     
 # 외부 바이너리 경로 (PyInstaller 번들을 고려)
-ffmpeg_path = resource_path("ffmpeg")
-git_path    = resource_path("git")
-cmake_path  = resource_path("cmake")
+# ffmpeg_path = resource_path("ffmpeg")
+# git_path    = resource_path("git")
+# cmake_path  = resource_path("cmake")
+
+ffmpeg_path = "ffmpeg"
+git_path    = "git"
+cmake_path  = "cmake"
 
 # 사용 예시: ffmpeg 실행 (환경변수 PATH를 별도로 설정하여 번들 내 바이너리 우선 사용)
 env = os.environ.copy()
@@ -257,6 +261,10 @@ def installation_process(progress_callback):
         os_type = platform.system()
         arch = platform.machine()
         progress_callback(f"운영체제: {os_type}, 아키텍처: {arch}", 5)
+        
+        # 시스템 의존성(예: Homebrew, ffmpeg, git, cmake)을 점검 및 설치
+        check_and_install_system_dependencies(progress_callback)
+
         if not check_whisper_cli():
             progress_callback("Whisper CLI가 없습니다. 다운로드 및 빌드 진행...", 5)
             download_and_build_whisper(progress_callback)

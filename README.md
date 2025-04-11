@@ -2,8 +2,16 @@
 
 Whisper.cpp + Silero VAD + Tkinter 기반의 **오디오 필사 자동화 GUI** 도구입니다.  
 MacOS(M1/M2 포함)에서 Conda 환경과 CoreML을 활용하여, 누구나 쉽게 오디오를 분할하고 텍스트로 변환할 수 있습니다.
+윈도우 및 Intel기반 Mac은 지원하지 않습니다
 
 ---
+
+## 🗣️ 필요 종속성
+
+1.brew
+2.git
+3.Python3.11 이상 권장
+4.pip
 
 ## ✨ 주요 기능
 
