@@ -1,0 +1,82 @@
+# ====================================
+# Git LFS (Large File Storage) Configuration
+# DeepVoice STT Voice Splitter
+# ====================================
+
+# 현재는 모든 대용량 파일이 .gitignore로 제외되어 있지만,
+# 향후 Git LFS를 사용할 경우를 대비한 설정
+
+# ====================================
+# Model Files (Future LFS Support)
+# ====================================
+
+# Whisper Models
+*.bin filter=lfs diff=lfs merge=lfs -text
+*.gguf filter=lfs diff=lfs merge=lfs -text
+*.onnx filter=lfs diff=lfs merge=lfs -text
+
+# PyTorch Models
+*.pt filter=lfs diff=lfs merge=lfs -text
+*.pth filter=lfs diff=lfs merge=lfs -text
+
+# Model Archives
+*.zip filter=lfs diff=lfs merge=lfs -text
+*.tar filter=lfs diff=lfs merge=lfs -text
+*.tar.gz filter=lfs diff=lfs merge=lfs -text
+
+# ====================================
+# Audio Files (Future LFS Support)
+# ====================================
+
+# Uncompressed Audio
+*.wav filter=lfs diff=lfs merge=lfs -text
+*.flac filter=lfs diff=lfs merge=lfs -text
+
+# Compressed Audio (Large files only)
+*.mp3 filter=lfs diff=lfs merge=lfs -text
+*.m4a filter=lfs diff=lfs merge=lfs -text
+*.ogg filter=lfs diff=lfs merge=lfs -text
+
+# ====================================
+# Text Files (Standard Git)
+# ====================================
+
+# Keep text files in standard Git
+*.txt text
+*.md text
+*.py text
+*.json text
+*.yaml text
+*.yml text
+*.ini text
+*.cfg text
+
+# ====================================
+# Binary Files (Standard Git)
+# ====================================
+
+# Small binary files that should stay in regular Git
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+
+# ====================================
+# Line Ending Configuration
+# ====================================
+
+# Auto-detect text files and normalize line endings
+* text=auto
+
+# Force LF line endings for these file types  
+*.py text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# Force CRLF line endings for Windows batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

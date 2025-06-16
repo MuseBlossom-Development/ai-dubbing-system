@@ -1,0 +1,321 @@
+# ====================================
+# DeepVoice STT Voice Splitter
+# Git Ignore Configuration
+# ====================================
+
+# ====================================
+# Large Model Files (>100MB)
+# ====================================
+
+# Whisper Models
+resources/
+whisper.cpp/models/
+*.bin
+*.gguf
+*.onnx
+
+# Gemma Models (7GB+ files)
+gemma/*.gguf
+gemma/gemma-*
+gemma/mmproj-*
+
+# CosyVoice Pretrained Models
+CosyVoice/pretrained_models/*/
+!CosyVoice/pretrained_models/*/README.md
+!CosyVoice/pretrained_models/*/configuration.json
+!CosyVoice/pretrained_models/*/cosyvoice*.yaml
+!CosyVoice/pretrained_models/*/config.json
+
+# Large model files by extension
+*.pt
+*.pth
+*.zip
+*.tar
+*.tar.gz
+*.whl
+
+# ====================================
+# Audio Files
+# ====================================
+
+# Large audio files
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.aac
+*.wma
+
+# Keep small sample files (if needed)
+!sample_*.wav
+!test_*.mp3
+
+# ====================================
+# Output/Temporary Directories
+# ====================================
+
+# Processing output
+split_audio/
+output/
+results/
+temp/
+tmp/
+cosy_output/
+
+# Cache directories
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ====================================
+# IDE and Editor Files
+# ====================================
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# ====================================
+# Operating System Files  
+# ====================================
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ====================================
+# Python Environment
+# ====================================
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Conda environments
+.conda/
+conda-meta/
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ====================================
+# Build and Distribution
+# ====================================
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# ====================================
+# Logs and Debugging
+# ====================================
+
+# Logs
+*.log
+logs/
+app.log
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ====================================
+# Configuration and Secrets
+# ====================================
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Configuration files (may contain sensitive data)
+config.ini
+settings.ini
+local_config.py
+
+# API keys and secrets
+secrets.json
+credentials.json
+.secrets/
+
+# ====================================
+# Git LFS (Large File Storage)
+# ====================================
+
+# Git LFS tracking (optional, if using LFS)
+# Uncomment if you plan to use Git LFS for large files
+# *.bin filter=lfs diff=lfs merge=lfs -text
+# *.gguf filter=lfs diff=lfs merge=lfs -text
+# *.pt filter=lfs diff=lfs merge=lfs -text
+
+# ====================================
+# Jupyter Notebooks
+# ====================================
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# IPython profile
+profile_default/
+ipython_config.py
+
+# ====================================
+# Database Files
+# ====================================
+
+*.db
+*.sqlite
+*.sqlite3
+
+# ====================================
+# Compiled Languages
+# ====================================
+
+# C/C++
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Rust
+target/
+Cargo.lock
+
+# ====================================
+# Custom Project Files
+# ====================================
+
+# Custom configuration backups
+vad_config.json.bak
+*.json.backup
+
+# Processing metadata
+.processing_state
+.last_run
+
+# User-specific files
+my_*
+user_*
+personal_*
+
+# ====================================
+# Keep Important Files
+# ====================================
+
+# Force include important files even if they match patterns above
+!requirements.txt
+!setup.py
+!pyproject.toml
+!README.md
+!LICENSE
+!.gitignore
+!.gitattributes
+
+# Keep directory structure indicators
+!*/.gitkeep
+!*/README.md
+
+# Keep configuration templates
+!config.template.json
+!settings.template.ini
+
+# ====================================
+# Performance and Monitoring
+# ====================================
+
+# Memory dumps
+*.dmp
+core.*
+
+# Performance monitoring
+.prof/
+*.prof
