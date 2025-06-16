@@ -21,13 +21,13 @@ graph TB
     F --> G[Segment Merging<br/>Timing Preservation]
     G --> H[Final Output<br/>Merged Audio + Transcripts]
     
-    subgraph "GUI Layer"
+    subgraph GUI ["GUI Layer"]
         I[Tkinter Interface]
         J[Real-time Logging]
         K[Parameter Configuration]
     end
     
-    subgraph "Core Processing"
+    subgraph CORE ["Core Processing"]
         B
         C
         D
@@ -37,7 +37,7 @@ graph TB
     end
     
     I --> A
-    J --> Core Processing
+    J --> CORE
     K --> B
 ```
 
@@ -468,3 +468,4 @@ python batch_cosy.py \
 ---
 
 **⚠️ 중요 고지사항**: 이 프로젝트는 여러 오픈소스 및 상용 라이선스 구성 요소를 포함합니다. 상업적 사용 전 반드시 각 구성 요소의 라이선스를 검토하고 법무팀과 상담하시기 바랍니다.
+
