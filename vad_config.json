@@ -1,11 +1,7 @@
 {
-    "threshold": 0.7,
-    "min_speech_duration_ms": 3500,
-    "max_speech_duration_s": 23.0,
-    "min_silence_duration_ms": 700,
-    "speech_pad_ms": 0,
-    "sampling_rate": 16000,
-    "neg_threshold": 0.35,
-    "return_seconds": false,
-    "visualize_probs": false
+    "threshold": 0.5,
+    "min_speech_duration_ms": 3900,
+    "max_speech_duration_s": 10.0,
+    "min_silence_duration_ms": 100,
+    "speech_pad_ms": 100
 }

@@ -26,6 +26,18 @@ CosyVoice/pretrained_models/*/
 !CosyVoice/pretrained_models/*/cosyvoice*.yaml
 !CosyVoice/pretrained_models/*/config.json
 
+# GPT-SoVITS Model Files
+GPT-SoVITS/GPT_SoVITS/pretrained_models/
+GPT-SoVITS/tools/uvr5/uvr5_weights/
+GPT-SoVITS/GPT_weights*/
+GPT-SoVITS/SoVITS_weights*/
+
+# MuseTalk Model Files
+MuseTalk/models/
+MuseTalk/results/
+MuseTalk/*.run
+MuseTalk/cuda_*.run
+
 # Large model files by extension
 *.pt
 *.pth
@@ -33,10 +45,21 @@ CosyVoice/pretrained_models/*/
 *.tar
 *.tar.gz
 *.whl
+*.ckpt
+*.safetensors
 
 # ====================================
-# Audio Files
+# Video and Audio Files
 # ====================================
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
 
 # Large audio files
 *.wav
@@ -62,6 +85,19 @@ results/
 temp/
 tmp/
 cosy_output/
+video_output/
+
+# Speaker analysis
+speaker_analysis*/
+pretrained_models/
+
+# Nested Git Repositories
+CosyVoice/
+GPT-SoVITS/
+MuseTalk/
+llama-cpp-python/
+whisper.cpp/
+gemma/
 
 # Cache directories
 __pycache__/
@@ -307,15 +343,3 @@ personal_*
 # Keep configuration templates
 !config.template.json
 !settings.template.ini
-
-# ====================================
-# Performance and Monitoring
-# ====================================
-
-# Memory dumps
-*.dmp
-core.*
-
-# Performance monitoring
-.prof/
-*.prof
