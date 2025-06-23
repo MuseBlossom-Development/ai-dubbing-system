@@ -707,12 +707,6 @@ def simple_speed_adjustment(audio_segment, target_duration_ms):
     return trimmed_audio
 
 
-def smart_audio_compression(audio_segment, target_duration_ms, text_content=""):
-    """CosyVoice speed 사용 시 간단한 후처리만 수행"""
-    log_message("CosyVoice speed 파라미터로 이미 길이 조절됨 - 최소 후처리만 적용")
-    return simple_speed_adjustment(audio_segment, target_duration_ms)
-
-
 def remove_excessive_silence(audio_segment, max_silence_ms=500):
     """과도한 무음 구간 제거"""
     try:
@@ -753,6 +747,12 @@ def remove_excessive_silence(audio_segment, max_silence_ms=500):
         return audio_segment
 
 
+def smart_audio_compression(audio_segment, target_duration_ms, text_content=""):
+    """CosyVoice speed 사용 시 간단한 후처리만 수행"""
+    log_message("CosyVoice speed 파라미터로 이미 길이 조절됨 - 최소 후처리만 적용")
+    return simple_speed_adjustment(audio_segment, target_duration_ms)
+
+
 def merge_segments_preserve_timing(segments, original_duration_ms, segments_dir, output_path,
                                    length_handling="preserve", overlap_handling="fade", max_extension=50,
                                    enable_smart_compression=True, correct_cosyvoice_padding=True):
@@ -761,6 +761,51 @@ def merge_segments_preserve_timing(segments, original_duration_ms, segments_dir,
     Args:
         correct_cosyvoice_padding: CosyVoice 패딩(0.2초) 보정 여부
     """
+    # 안전장치: 입력값 검증
+    if not segments:
+        log_message("❌ 세그먼트 데이터가 없습니다")
+        return original_duration_ms
+
+    if original_duration_ms <= 0:
+        log_message("❌ 원본 길이가 유효하지 않습니다")
+        return 0
+
+    # 안전장치: 세그먼트 타임스탬프 검증
+    max_reasonable_duration = 3600000  # 1시간 = 3,600,000ms
+    if original_duration_ms > max_reasonable_duration:
+        log_message(f"⚠️ 원본 길이가 비정상적으로 큼: {original_duration_ms}ms ({original_duration_ms / 60000:.1f}분)")
+        original_duration_ms = min(original_duration_ms, max_reasonable_duration)
+        log_message(f"🔧 안전한 길이로 제한: {original_duration_ms}ms")
+
+    # 세그먼트 유효성 검사
+    valid_segments = []
+    for i, (start_ms, end_ms) in enumerate(segments, 1):
+        if start_ms < 0 or end_ms < 0:
+            log_message(f"⚠️ 세그먼트 {i}: 음수 타임스탬프 무시 ({start_ms}, {end_ms})")
+            continue
+
+        if end_ms <= start_ms:
+            log_message(f"⚠️ 세그먼트 {i}: 유효하지 않은 구간 무시 ({start_ms}, {end_ms})")
+            continue
+
+        if start_ms > max_reasonable_duration or end_ms > max_reasonable_duration:
+            log_message(f"⚠️ 세그먼트 {i}: 비정상적으로 큰 타임스탬프 무시 ({start_ms}, {end_ms})")
+            continue
+
+        duration = end_ms - start_ms
+        if duration > 600000:  # 10분 초과
+            log_message(f"⚠️ 세그먼트 {i}: 과도하게 긴 구간 무시 ({duration}ms)")
+            continue
+
+        valid_segments.append((start_ms, end_ms))
+
+    if not valid_segments:
+        log_message("❌ 유효한 세그먼트가 없습니다")
+        return original_duration_ms
+
+    log_message(f"✅ 유효한 세그먼트: {len(valid_segments)}/{len(segments)}개")
+    segments = valid_segments
+
     # 베이스 이름 추출
     if 'cosy_output' in segments_dir:
         path_parts = segments_dir.split(os.sep)
@@ -830,6 +875,12 @@ def merge_segments_preserve_timing(segments, original_duration_ms, segments_dir,
                 synth_audio = AudioSegment.from_file(seg_path)
                 synth_duration = len(synth_audio)
 
+                # 안전장치: 합성 파일 크기 검증
+                if synth_duration > 600000:  # 10분 초과
+                    log_message(f"⚠️ 세그먼트 {idx}: 합성 파일이 과도하게 큼 ({synth_duration}ms) - 10분으로 제한")
+                    synth_audio = synth_audio[:600000].fade_out(1000)
+                    synth_duration = len(synth_audio)
+
                 # 텍스트 내용 로드 (스마트 압축용)
                 text_content = ""
                 if enable_smart_compression:
@@ -892,7 +943,7 @@ def merge_segments_preserve_timing(segments, original_duration_ms, segments_dir,
 
         processed_segments.append(segment_data)
 
-    # 2단계: 전체 타임라인 길이 계산
+    # 2단계: 전체 타임라인 길이 계산 (안전장치 포함)
     if length_handling == "preserve":
         # 보존 모드: 가장 긴 세그먼트까지의 길이 (패딩 보정 고려)
         max_end_time = 0
@@ -909,10 +960,36 @@ def merge_segments_preserve_timing(segments, original_duration_ms, segments_dir,
         max_allowed_extension = original_duration_ms * max_extension / 100
         final_timeline_length = original_duration_ms + max_allowed_extension
 
-    log_message(f"📏 최종 타임라인 길이: {final_timeline_length}ms")
+    # 안전장치: 최종 타임라인 길이 제한
+    if final_timeline_length > max_reasonable_duration:
+        log_message(f"⚠️ 최종 타임라인이 과도하게 큼: {final_timeline_length}ms - 제한 적용")
+        final_timeline_length = min(final_timeline_length, max_reasonable_duration)
+        log_message(f"🔧 안전한 길이로 제한: {final_timeline_length}ms")
 
-    # 3단계: 빈 타임라인 생성
-    final_timeline = AudioSegment.silent(duration=int(final_timeline_length))
+    log_message(f"📏 최종 타임라인 길이: {final_timeline_length}ms ({final_timeline_length / 60000:.1f}분)")
+
+    # 안전장치: 메모리 사용량 체크 (대략적 계산)
+    estimated_memory_mb = (final_timeline_length * 44100 * 2 * 2) / (1024 * 1024)  # 44.1kHz, 16bit, stereo
+    if estimated_memory_mb > 1000:  # 1GB 초과
+        log_message(f"⚠️ 예상 메모리 사용량이 과도함: {estimated_memory_mb:.1f}MB")
+        # 더 작은 길이로 제한
+        safe_length = min(final_timeline_length, 600000)  # 10분으로 제한
+        log_message(f"🔧 메모리 안전을 위해 길이 제한: {safe_length}ms")
+        final_timeline_length = safe_length
+
+    # 3단계: 빈 타임라인 생성 (안전한 방법)
+    try:
+        log_message(f"💾 {final_timeline_length}ms 빈 타임라인 생성 중...")
+        final_timeline = AudioSegment.silent(duration=int(final_timeline_length))
+        log_message(f"✅ 타임라인 생성 완료: {len(final_timeline)}ms")
+    except MemoryError:
+        log_message("❌ 메모리 부족으로 타임라인 생성 실패 - 더 작은 크기로 재시도")
+        final_timeline_length = min(final_timeline_length, 300000)  # 5분으로 축소
+        final_timeline = AudioSegment.silent(duration=int(final_timeline_length))
+        log_message(f"🔧 축소된 타임라인 생성: {len(final_timeline)}ms")
+    except Exception as e:
+        log_message(f"❌ 타임라인 생성 실패: {e}")
+        return original_duration_ms
 
     # 4단계: 겹침 감지 및 해결 (보정된 위치 기준)
     overlap_pairs = []
