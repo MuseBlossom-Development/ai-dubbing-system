@@ -58,14 +58,14 @@ def apply_lip_sync_to_video(video_path, audio_path, output_path, frame_folder=No
 
         config_path = os.path.join(config_dir, 'auto_lip_sync_config.yaml')
 
-        # 상대 경로로 변환
-        rel_video_path = os.path.relpath(temp_video_25fps, musetalk_dir)
-        rel_audio_path = os.path.relpath(audio_path, musetalk_dir)
+        # 절대 경로로 설정 (상대 경로 문제 해결)
+        abs_video_path = os.path.abspath(temp_video_25fps)
+        abs_audio_path = os.path.abspath(audio_path)
 
-        # 개선된 설정 파일 (더 많은 파라미터 포함)
+        # 개선된 설정 파일 (절대 경로 사용)
         config_content = f"""task_0:
-  video_path: "{rel_video_path}"
-  audio_path: "{rel_audio_path}"
+  video_path: "{abs_video_path}"
+  audio_path: "{abs_audio_path}"
   bbox_shift: 0
   extra_margin: 5
   parsing_mode: "default"
@@ -248,6 +248,163 @@ def apply_lip_sync_to_video(video_path, audio_path, output_path, frame_folder=No
         import traceback
         log_message(f"   상세 오류: {traceback.format_exc()}")
         return False
+
+
+def process_complete_pipeline(input_file, settings):
+    """
+    완전한 영상 처리 파이프라인
+
+    플로우:
+    1. 영상에서 음성 추출
+    2. 음성에서 보컬/배경음 분리
+    3. 보컬만 STT → 번역 → TTS → 병합
+    4. 처리된 보컬과 배경음 재합성
+    5. 최종 영상과 음성 합성
+    """
+    try:
+        # 디버그: 설정 확인
+        log_message(f"🔧 처리 설정 확인:")
+        log_message(f"  - 립싱크 활성화: {settings.get('enable_lip_sync', False)}")
+        log_message(f"  - 선택된 언어: {settings.get('selected_languages', [])}")
+
+        base_name = os.path.splitext(os.path.basename(input_file))[0]
+        output_base_dir = os.path.join(os.getcwd(), 'video_output', base_name)
+        os.makedirs(output_base_dir, exist_ok=True)
+
+        log_message(f"🎬 영상 처리 파이프라인 시작: {input_file}")
+
+        # Step 1: 영상 처리 (음성 추출 + 보컬/배경음 분리)
+        log_message("📹 Step 1: 영상에서 음성 추출 및 보컬/배경음 분리")
+        extracted_audio, vocals_path, background_path, original_video = process_video_file(
+            input_file, output_base_dir
+        )
+
+        if not vocals_path or not background_path:
+            log_message("❌ 보컬/배경음 분리 실패, 파이프라인 중단")
+            return
+
+        # Step 2: 보컬 파일로 STT 처리
+        log_message("🎤 Step 2: 보컬 음성으로 STT 처리")
+        vad_config = load_vad_config()
+        output_dir, segments, orig_duration = run_full_whisper_processing(vocals_path, vad_config)
+
+        if not output_dir or not segments:
+            log_message("❌ STT 처리 실패, 파이프라인 중단")
+            return
+
+        # 화자 기반 분할 적용 (활성화된 경우)
+        if settings.get('enable_speaker_splitting', False):
+            log_message("🗣️ 화자 기반 분할 적용 중...")
+            base_name = os.path.splitext(os.path.basename(vocals_path))[0]
+            srt_path = os.path.join(output_dir, f"{base_name}{os.path.splitext(vocals_path)[1]}.srt")
+            segments, orig_duration = apply_speaker_based_splitting(
+                vocals_path,
+                srt_path,
+                output_dir,
+                True
+            )
+
+        if not output_dir or not segments:
+            log_message("❌ 화자 분할 처리 실패")
+            return
+
+        # Step 3: 텍스트 번역 및 음성 합성
+        log_message("🔄 Step 3: 텍스트 번역 및 음성 합성")
+
+        # 번역 설정 구성
+        translation_settings = {
+            'translation_length': settings.get('translation_length', 0.8),
+            'quality_mode': settings.get('quality_mode', 'balanced'),
+            'selected_languages': settings.get('selected_languages', ['english'])
+        }
+
+        # Whisper 디렉토리 처리 (번역 포함)
+        selected_languages = run_whisper_directory(output_dir, translation_settings)
+
+        if not selected_languages:
+            log_message("❌ 번역 처리 실패, 파이프라인 중단")
+            return
+
+        # 각 언어별로 음성 합성 및 병합
+        base_name = os.path.splitext(os.path.basename(input_file))[0]
+        input_ext = os.path.splitext(input_file)[1]
+        srt_path = os.path.join(output_dir, f"{base_name}{input_ext}.srt")
+        segments = parse_srt_segments(srt_path)
+        orig_audio = AudioSegment.from_file(input_file)
+        original_duration_ms = len(orig_audio)
+
+        for lang in selected_languages:
+            lang_name = SUPPORTED_LANGUAGES[lang]['name'].lower()
+            trans_type = "free"
+            text_dir = os.path.join(output_dir, 'txt', lang_name, trans_type)
+
+            if not os.path.exists(text_dir):
+                log_message(f"⏭️ {SUPPORTED_LANGUAGES[lang]['name']} {trans_type} 텍스트 없음, 건너뛰기")
+                continue
+
+            cosy_out = os.path.join(output_dir, 'cosy_output', lang_name, trans_type)
+            os.makedirs(cosy_out, exist_ok=True)
+
+            # 3초 미만 세그먼트 확장 (제로샷 개선용)
+            if settings.get('enable_3sec_extension', True):
+                log_message("🔄 제로샷 합성을 위한 3초 미만 세그먼트 확장 중...")
+                from audio_processor import extend_short_segments_for_zeroshot, create_extended_segments_mapping
+                extended_wav_dir = extend_short_segments_for_zeroshot(output_dir, min_duration_ms=3000)
+
+                if extended_wav_dir:
+                    # 확장 매핑 정보 생성
+                    mapping_info = create_extended_segments_mapping(output_dir, extended_wav_dir)
+                    log_message(f"📊 세그먼트 확장 완료: {len(mapping_info.get('segments_info', []))}개 파일 처리")
+
+                    # 확장된 세그먼트를 사용하여 합성
+                    synthesis_audio_dir = extended_wav_dir
+                else:
+                    # 확장 실패 시 원본 사용
+                    log_message("⚠️ 세그먼트 확장 실패, 원본 세그먼트 사용")
+                    synthesis_audio_dir = os.path.join(output_dir, 'wav')
+            else:
+                # 설정 비활성화 시 원본 사용
+                synthesis_audio_dir = os.path.join(output_dir, 'wav')
+
+            # CosyVoice2 합성
+            try:
+                cosy_batch(
+                    audio_dir=synthesis_audio_dir,
+                    prompt_text_dir=os.path.join(output_dir, 'txt', 'ko'),
+                    text_dir=text_dir,
+                    out_dir=cosy_out,
+                    enable_instruct=settings.get('enable_instruct', False),
+                    manual_command=settings.get('manual_command', None),
+                    target_language=lang
+                )
+
+                log_message(f"✅ {lang_name} ({trans_type}) 합성 완료")
+
+                # 실제 합성 파일들은 zero_shot 서브디렉토리에 저장됨
+                actual_synthesis_dir = os.path.join(cosy_out, 'zero_shot')
+
+                # 병합
+                merged_path = os.path.join(output_dir, f"{base_name}_{lang_name}_merged.wav")
+                merge_segments_preserve_timing(
+                    segments,
+                    orig_duration,  # 이미 밀리초 단위이므로 * 1000 제거
+                    actual_synthesis_dir,  # zero_shot 서브디렉토리 참조
+                    merged_path,
+                    length_handling=settings.get('length_handling', 'preserve'),
+                    overlap_handling=settings.get('overlap_handling', 'fade'),
+                    max_extension=settings.get('max_extension', 50),
+                    enable_smart_compression=settings.get('enable_smart_compression', True)
+                )
+
+                log_message(f"✅ {lang_name} 처리 완료: {merged_path}")
+
+            except Exception as e:
+                log_message(f"❌ {lang_name} 처리 오류: {e}")
+
+        log_message("🎵 음성 파일 처리 완료")
+
+    except Exception as e:
+        log_message(f"음성 파일 처리 오류: {e}")
 
 
 def process_complete_pipeline(input_file, settings):
