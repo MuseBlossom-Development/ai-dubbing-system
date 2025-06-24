@@ -399,7 +399,7 @@ def process_complete_pipeline(input_file, settings):
                 merged_path = os.path.join(output_dir, f"{base_name}_{lang_name}_merged.wav")
                 merge_segments_preserve_timing(
                     segments,
-                    orig_duration * 1000,
+                    orig_duration,  # 이미 밀리초 단위이므로 * 1000 제거
                     actual_synthesis_dir,  # zero_shot 서브디렉토리 참조
                     merged_path,
                     length_handling=settings.get('length_handling', 'preserve'),
