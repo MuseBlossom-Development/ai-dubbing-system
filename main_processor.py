@@ -39,10 +39,13 @@ def apply_lip_sync_to_video(video_path, audio_path, output_path, frame_folder=No
         temp_video_25fps = os.path.join(os.path.dirname(video_path), f"{base_name}_temp_25fps.mp4")
 
         log_message("🔄 비디오를 25fps로 변환 중...")
-        # FFmpeg로 25fps 변환
+        # FFmpeg로 25fps 변환 (고품질 설정)
         ffmpeg_cmd = [
             "ffmpeg", "-y", "-i", video_path,
-            "-r", "25", temp_video_25fps
+            "-r", "25",
+            "-c:v", "libx264", "-crf", "15", "-preset", "slow",
+            "-c:a", "aac", "-b:a", "192k",
+            temp_video_25fps
         ]
         result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
 
