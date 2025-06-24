@@ -39,14 +39,45 @@ def apply_lip_sync_to_video(video_path, audio_path, output_path, frame_folder=No
         temp_video_25fps = os.path.join(os.path.dirname(video_path), f"{base_name}_temp_25fps.mp4")
 
         log_message("🔄 비디오를 25fps로 변환 중...")
-        # FFmpeg로 25fps 변환 (고품질 설정)
-        ffmpeg_cmd = [
-            "ffmpeg", "-y", "-i", video_path,
-            "-r", "25",
-            "-c:v", "libx264", "-crf", "15", "-preset", "slow",
-            "-c:a", "aac", "-b:a", "192k",
-            temp_video_25fps
-        ]
+        # 먼저 오디오 길이 확인
+        try:
+            audio_info_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", audio_path]
+            audio_info_result = subprocess.run(audio_info_cmd, capture_output=True, text=True)
+            if audio_info_result.returncode == 0:
+                import json
+                audio_info = json.loads(audio_info_result.stdout)
+                audio_duration = float(audio_info['format']['duration'])
+                log_message(f"   🎵 오디오 길이: {audio_duration:.2f}초")
+
+                # FFmpeg로 25fps 변환 (오디오 길이에 맞춤)
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", "-i", video_path,
+                    "-r", "25",
+                    "-t", str(audio_duration),  # 오디오 길이에 맞춰 자르기
+                    "-c:v", "libx264",
+                    "-c:a", "copy",
+                    temp_video_25fps
+                ]
+            else:
+                log_message("⚠️ 오디오 길이 확인 실패, 기본 변환 사용")
+                # 기본 변환 (길이 조정 없음)
+                ffmpeg_cmd = [
+                    "ffmpeg", "-y", "-i", video_path,
+                    "-r", "25",
+                    "-c:v", "libx264",
+                    "-c:a", "copy",
+                    temp_video_25fps
+                ]
+        except Exception as e:
+            log_message(f"⚠️ 오디오 분석 오류: {e}, 기본 변환 사용")
+            # 오류 시 기본 변환
+            ffmpeg_cmd = [
+                "ffmpeg", "-y", "-i", video_path,
+                "-r", "25",
+                "-c:v", "libx264",
+                "-c:a", "copy",
+                temp_video_25fps
+            ]
         result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
@@ -414,7 +445,7 @@ def process_complete_pipeline(input_file, settings):
                 actual_synthesis_dir = os.path.join(cosy_out, 'zero_shot')
 
                 # 병합
-                merged_path = os.path.join(output_dir, f"{base_name}_{lang_name}_merged.wav")
+                merged_path = os.path.join(output_base_dir, f"{base_name}_{lang_name}_merged.wav")
                 merge_segments_preserve_timing(
                     segments,
                     orig_duration,  # 이미 밀리초 단위이므로 * 1000 제거
@@ -620,7 +651,7 @@ def process_audio_only_pipeline(input_file, settings):
             cosy_out = os.path.join(output_dir, 'cosy_output', lang_name, trans_type)
             os.makedirs(cosy_out, exist_ok=True)
 
-            # 3초 미만 세그먼트 확장 (제로샷 개선용)
+            # 3초 미만 세그먼트 확장 (제로샷 합성을 위한)
             if settings.get('enable_3sec_extension', True):
                 log_message("🔄 제로샷 합성을 위한 3초 미만 세그먼트 확장 중...")
                 from audio_processor import extend_short_segments_for_zeroshot, create_extended_segments_mapping
