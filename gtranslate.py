@@ -52,22 +52,6 @@ _llm = None
 MAX_ATTEMPTS = 5  # 재시도 횟수 증가
 
 
-def _get_library_path():
-    """llama-cpp-python 빌드 후 라이브러리 경로 반환"""
-    system = platform.system()
-    base_path = os.path.dirname(__file__)
-
-    if system == "Windows":
-        # Windows: llama-cpp-python/build/lib/Release/llama_cpp.dll
-        return os.path.join(base_path, "llama-cpp-python", "build", "lib", "Release", "llama_cpp.dll")
-    elif system == "Darwin":  # macOS
-        # macOS: llama-cpp-python/build/lib/libllama_cpp.dylib
-        return os.path.join(base_path, "llama-cpp-python", "build", "lib", "libllama_cpp.dylib")
-    else:  # Linux
-        # Linux: llama-cpp-python/build/lib/libllama_cpp.so
-        return os.path.join(base_path, "llama-cpp-python", "build", "lib", "libllama_cpp.so")
-
-
 def _get_llm():
     global _llm
     if _llm is None:
@@ -94,7 +78,6 @@ def _get_llm():
                 n_gpu_layers=-1,  # 모든 레이어를 GPU에서 실행
                 n_batch=512,  # 배치 크기 조정
                 seed=None,  # 매번 다른 시드 사용하여 컨텍스트 초기화
-                library=library_path,
                 verbose=True  # GPU 사용 여부 확인을 위해 로그 활성화
             )
 
@@ -119,6 +102,22 @@ def _get_llm():
             raise
 
     return _llm
+
+
+def _get_library_path():
+    """llama-cpp-python 빌드 후 라이브러리 경로 반환"""
+    system = platform.system()
+    base_path = os.path.dirname(__file__)
+
+    if system == "Windows":
+        # Windows: llama-cpp-python/build/lib/Release/llama_cpp.dll
+        return os.path.join(base_path, "llama-cpp-python", "build", "lib", "Release", "llama_cpp.dll")
+    elif system == "Darwin":  # macOS
+        # macOS: llama-cpp-python/build/lib/libllama_cpp.dylib
+        return os.path.join(base_path, "llama-cpp-python", "build", "lib", "libllama_cpp.dylib")
+    else:  # Linux
+        # Linux: llama-cpp-python/build/lib/libllama_cpp.so
+        return os.path.join(base_path, "llama-cpp-python", "build", "lib", "libllama_cpp.so")
 
 
 def _reset_llm_context():

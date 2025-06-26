@@ -27,7 +27,7 @@ from utils import log_message
 
 def apply_lip_sync(video_path, audio_path, output_path, progress_callback=None):
     """
-    MuseTalk을 사용하여 립싱크 적용
+    LatentSync를 사용하여 립싱크 적용
     
     Args:
         video_path: 원본 비디오 경로
@@ -40,14 +40,16 @@ def apply_lip_sync(video_path, audio_path, output_path, progress_callback=None):
         str: 결과 메시지
     """
     try:
+        from datetime import datetime
+
         if progress_callback:
-            progress_callback(0.1, "MuseTalk 준비 중...")
+            progress_callback(0.1, "LatentSync 준비 중...")
 
-        # MuseTalk 디렉토리 경로
-        musetalk_dir = os.path.join(os.path.dirname(__file__), 'MuseTalk')
+        # LatentSync 디렉토리 경로
+        latentsync_dir = os.path.join(os.path.dirname(__file__), 'LatentSync')
 
-        if not os.path.exists(musetalk_dir):
-            return False, "MuseTalk이 설치되어 있지 않습니다."
+        if not os.path.exists(latentsync_dir):
+            return False, "LatentSync가 설치되어 있지 않습니다."
 
         # 비디오를 25fps로 변환
         base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -66,69 +68,198 @@ def apply_lip_sync(video_path, audio_path, output_path, progress_callback=None):
         if result.returncode != 0:
             return False, f"비디오 변환 실패: {result.stderr}"
 
-        # MuseTalk 설정 파일 생성
-        config_dir = os.path.join(musetalk_dir, 'configs', 'inference')
-        os.makedirs(config_dir, exist_ok=True)
-
-        config_path = os.path.join(config_dir, 'lip_sync_config.yaml')
-
-        # 상대 경로로 변환
-        rel_video_path = os.path.relpath(temp_video_25fps, musetalk_dir)
-        rel_audio_path = os.path.relpath(audio_path, musetalk_dir)
-
-        config_content = f"""task_0:
-  video_path: "{rel_video_path}"
-  audio_path: "{rel_audio_path}"
-"""
-
-        with open(config_path, 'w', encoding='utf-8') as f:
-            f.write(config_content)
-
         if progress_callback:
-            progress_callback(0.3, "MuseTalk 실행 중... (시간이 오래 걸릴 수 있습니다)")
+            progress_callback(0.3, "LatentSync 전처리 및 실행 중... (시간이 오래 걸릴 수 있습니다)")
 
-        # MuseTalk 실행
-        musetalk_cmd = [
+        # 환경변수 설정
+        env = os.environ.copy()
+        env['PYTHONPATH'] = latentsync_dir
+
+        # 전처리용 임시 디렉토리 생성
+        current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        preprocess_dir = os.path.join(latentsync_dir, "temp", "preprocess", current_time)
+        os.makedirs(preprocess_dir, exist_ok=True)
+
+        # 1. 비디오를 전처리 디렉토리로 복사
+        input_video_dir = os.path.join(preprocess_dir, "input")
+        os.makedirs(input_video_dir, exist_ok=True)
+
+        # 비디오 파일을 특정 이름으로 복사
+        video_filename = f"{base_name}.mp4"
+        preprocessed_input = os.path.join(input_video_dir, video_filename)
+        shutil.copy2(temp_video_25fps, preprocessed_input)
+
+        # 2. Affine Transform 실행
+        affine_output_dir = os.path.join(preprocess_dir, "affine_transformed")
+        os.makedirs(affine_output_dir, exist_ok=True)
+
+        try:
+            affine_cmd = [
+                "python", "-m", "preprocess.affine_transform",
+                "--input_dir", input_video_dir,
+                "--output_dir", affine_output_dir,
+                "--temp_dir", os.path.join(preprocess_dir, "temp"),
+                "--resolution", "256",
+                "--num_workers", "1"
+            ]
+
+            affine_result = subprocess.run(
+                affine_cmd,
+                cwd=latentsync_dir,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=300
+            )
+
+            if affine_result.returncode == 0:
+                # 전처리된 비디오 찾기
+                processed_videos = []
+                for root, dirs, files in os.walk(affine_output_dir):
+                    for file in files:
+                        if file.endswith('.mp4'):
+                            processed_videos.append(os.path.join(root, file))
+
+                if processed_videos:
+                    abs_video_path = os.path.abspath(processed_videos[0])
+                else:
+                    abs_video_path = os.path.abspath(temp_video_25fps)
+            else:
+                abs_video_path = os.path.abspath(temp_video_25fps)
+
+        except Exception:
+            abs_video_path = os.path.abspath(temp_video_25fps)
+
+        # 절대 경로로 변환
+        abs_audio_path = os.path.abspath(audio_path)
+
+        # 출력 파일 경로 생성 (임시 출력 경로)
+        temp_output_path = os.path.join(latentsync_dir, "temp", f"output_{current_time}.mp4")
+
+        # temp 디렉토리 생성
+        os.makedirs(os.path.join(latentsync_dir, "temp"), exist_ok=True)
+
+        # 체크포인트 파일 확인 (v1.6 우선 확인 - gradio_app.py와 동일한 로직)
+        checkpoint_path_v16 = os.path.join(latentsync_dir, "checkpoints_v1.6", "latentsync_unet.pt")
+        checkpoint_path_default = os.path.join(latentsync_dir, "checkpoints", "latentsync_unet.pt")
+
+        if os.path.exists(checkpoint_path_v16):
+            checkpoint_path = checkpoint_path_v16
+        elif os.path.exists(checkpoint_path_default):
+            checkpoint_path = checkpoint_path_default
+        else:
+            return False, f"LatentSync 체크포인트 파일을 찾을 수 없습니다: {checkpoint_path_v16} 또는 {checkpoint_path_default}"
+
+        # Whisper 모델 확인
+        whisper_path = os.path.join(latentsync_dir, "checkpoints", "whisper", "tiny.pt")
+        if not os.path.exists(whisper_path):
+            return False, f"Whisper 모델을 찾을 수 없습니다: {whisper_path}"
+
+        # 체크포인트 파일 크기로 버전 추정 (추론 최적화)
+        checkpoint_size_gb = os.path.getsize(checkpoint_path) / (1024 ** 3)
+
+        # 추론용 설정 파일 선택
+        if checkpoint_size_gb > 3.0:  # 큰 모델 (1.6 버전 추정)
+            config_path = os.path.join(latentsync_dir, "configs", "unet", "stage2_512.yaml")
+            if not os.path.exists(config_path):
+                config_path = os.path.join(latentsync_dir, "configs", "unet", "stage2.yaml")
+            expected_vram = "18GB"
+        else:  # 작은 모델 (1.5 버전 추정)
+            config_path = os.path.join(latentsync_dir, "configs", "unet", "stage2_efficient.yaml")
+            if not os.path.exists(config_path):
+                config_path = os.path.join(latentsync_dir, "configs", "unet", "stage2.yaml")
+            expected_vram = "8GB"
+
+        if not os.path.exists(config_path):
+            return False, "LatentSync 설정 파일을 찾을 수 없습니다"
+
+        # 파라미터 최적화 (추론 시 성능 우선)
+        inference_steps = "20"  # 기본값, 품질과 속도 균형
+        guidance_scale = "1.5"  # 기본값, 안정성 우선
+
+        # LatentSync 실행
+        latentsync_cmd = [
             "python", "-m", "scripts.inference",
-            "--inference_config", "configs/inference/lip_sync_config.yaml",
-            "--result_dir", "results/lip_sync",
-            "--unet_model_path", "models/musetalkV15/unet.pth",
-            "--unet_config", "models/musetalkV15/musetalk.json",
-            "--version", "v15"
+            "--unet_config_path", config_path,
+            "--inference_ckpt_path", checkpoint_path,
+            "--video_path", abs_video_path,
+            "--audio_path", abs_audio_path,
+            "--video_out_path", temp_output_path,
+            "--inference_steps", inference_steps,
+            "--guidance_scale", guidance_scale,
+            "--seed", "1247",
+            "--temp_dir", "temp",
+            "--enable_deepcache"  # 추론 속도 향상
         ]
 
-        # MuseTalk 디렉토리에서 실행
+        # LatentSync 디렉토리에서 실행
         result = subprocess.run(
-            musetalk_cmd,
-            cwd=musetalk_dir,
+            latentsync_cmd,
+            cwd=latentsync_dir,
             capture_output=True,
-            text=True
+            text=True,
+            env=env
         )
 
         if progress_callback:
             progress_callback(0.8, "립싱크 결과 처리 중...")
 
-        # 결과 파일 찾기
-        result_dir = os.path.join(musetalk_dir, 'results', 'lip_sync', 'v15')
+        if result.returncode != 0:
+            # 얼굴 감지 실패 관련 에러 확인
+            error_output = result.stderr.lower()
+            if "face not detected" in error_output or "runtime error" in error_output:
+                # 원본 비디오로 대체 출력 생성 (립싱크 없이)
+                try:
+                    # 원본 비디오와 새 오디오 합성
+                    fallback_cmd = [
+                        "ffmpeg", "-y", "-i", abs_video_path, "-i", abs_audio_path,
+                        "-c:v", "copy", "-c:a", "aac", "-map", "0:v:0", "-map", "1:a:0",
+                        "-shortest", output_path
+                    ]
 
-        if not os.path.exists(result_dir):
-            return False, f"MuseTalk 결과 디렉토리를 찾을 수 없습니다: {result_dir}"
+                    fallback_result = subprocess.run(fallback_cmd, capture_output=True, text=True)
+                    if fallback_result.returncode == 0:
+                        # 임시 파일 정리
+                        if os.path.exists(temp_video_25fps):
+                            os.remove(temp_video_25fps)
 
-        # 생성된 파일 찾기
-        result_files = []
-        for file in os.listdir(result_dir):
-            if file.endswith('.mp4'):
-                result_files.append(os.path.join(result_dir, file))
+                        # 전처리 임시 디렉토리 정리
+                        try:
+                            if os.path.exists(preprocess_dir):
+                                shutil.rmtree(preprocess_dir)
+                        except:
+                            pass  # 정리 실패해도 무시
 
-        if not result_files:
-            return False, "립싱크 결과 파일이 생성되지 않았습니다."
+                        return True, "얼굴 감지 실패로 립싱크 없이 오디오와 비디오가 합성되었습니다."
+                    else:
+                        return False, f"LatentSync 및 대체 처리 모두 실패: {result.stderr}"
+                except Exception as e:
+                    return False, f"대체 처리 중 오류: {e}"
+            else:
+                return False, f"LatentSync 실행 실패: {result.stderr}"
 
-        # 첫 번째 결과 파일을 출력 경로로 복사
-        shutil.copy2(result_files[0], output_path)
+        # 결과 파일 확인
+        if not os.path.exists(temp_output_path):
+            return False, f"LatentSync 결과 파일이 생성되지 않았습니다: {temp_output_path}"
+
+        # 결과 파일을 출력 경로로 복사
+        shutil.copy2(temp_output_path, output_path)
 
         # 임시 파일 정리
+        try:
+            os.remove(temp_output_path)
+        except:
+            pass  # 정리 실패해도 무시
+
         if os.path.exists(temp_video_25fps):
             os.remove(temp_video_25fps)
+
+        # 전처리 임시 디렉토리 정리
+        try:
+            if os.path.exists(preprocess_dir):
+                shutil.rmtree(preprocess_dir)
+        except:
+            pass  # 정리 실패해도 무시
 
         if progress_callback:
             progress_callback(1.0, "립싱크 완료!")
@@ -258,16 +389,16 @@ def process_audio_video(
         result_info += f"📁 출력 폴더: {output_dir}\n"
         result_info += f"🎤 VAD 설정: threshold={vad_threshold}, min_speech={vad_min_speech_duration_ms}ms\n"
 
-        # 립싱크 활성화 시 MuseTalk 결과 확인
+        # 립싱크 활성화 시 LatentSync 결과 확인
         if enable_lip_sync:
-            musetalk_dir = os.path.join(os.path.dirname(__file__), 'MuseTalk')
-            if os.path.exists(musetalk_dir):
-                musetalk_output_dir = os.path.join(musetalk_dir, 'results', 'lip_sync', 'v15')
-                if os.path.exists(musetalk_output_dir):
+            latentsync_dir = os.path.join(os.path.dirname(__file__), 'LatentSync')
+            if os.path.exists(latentsync_dir):
+                latentsync_output_dir = os.path.join(latentsync_dir, 'temp')
+                if os.path.exists(latentsync_output_dir):
                     try:
-                        musetalk_files = [f for f in os.listdir(musetalk_output_dir) if f.endswith('.mp4')]
-                        if musetalk_files:
-                            result_info += f"🎥 립싱크 결과 파일: {musetalk_files[0]}\n"
+                        latentsync_files = [f for f in os.listdir(latentsync_output_dir) if f.endswith('.mp4')]
+                        if latentsync_files:
+                            result_info += f"🎥 립싱크 결과 파일: {latentsync_files[0]}\n"
                     except (OSError, PermissionError):
                         # 디렉토리 접근 오류 시 무시
                         pass
@@ -618,19 +749,20 @@ def create_interface():
                     file_types=[".wav", ".mp3"]
                 )
                 with gr.Row():
-                    speaker_diarization_enable = gr.Checkbox(label="화자 분리 활성화", value=True)
-                    speaker_mode_dia = gr.Radio(
-                        choices=["auto", "fixed"],
-                        value="auto",
-                        label="화자 수 설정"
-                    )
-                    num_speakers_dia = gr.Slider(
-                        minimum=2,
-                        maximum=10,
-                        value=2,
-                        step=1,
-                        label="고정 화자 수"
-                    )
+                    with gr.Column():
+                        speaker_diarization_enable = gr.Checkbox(label="화자 분리 활성화", value=True)
+                        speaker_mode_dia = gr.Radio(
+                            choices=["auto", "fixed"],
+                            value="auto",
+                            label="화자 수 설정"
+                        )
+                        num_speakers_dia = gr.Slider(
+                            minimum=2,
+                            maximum=10,
+                            value=2,
+                            step=1,
+                            label="고정 화자 수"
+                        )
 
                 speaker_btn = gr.Button("🗣️ 화자 분리 실행", variant="primary")
                 speaker_output = gr.Textbox(label="📊 화자 분리 결과", lines=5)
@@ -783,7 +915,7 @@ def create_interface():
             - **번역 설정**: 원하는 언어로 번역 및 음성 합성
             - **화자 분리**: 여러 화자가 있는 음성을 개별적으로 처리
             - **VAD 설정**: 음성 감지 임계값 및 길이 제한 조정
-            - **립싱크**: MuseTalk을 사용하여 비디오에 립싱크 적용
+            - **립싱크**: LatentSync을 사용하여 비디오에 립싱크 적용
             
             ## 🎤 VAD 설정 팁
             

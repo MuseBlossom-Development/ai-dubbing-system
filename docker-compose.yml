@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 1. Whisper STT 서비스
   whisper-stt:

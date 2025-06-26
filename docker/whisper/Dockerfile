@@ -19,7 +19,7 @@ RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
 
 # whisper.cpp 빌드
 WORKDIR /app
-RUN git clone https://github.com/ggerganov/whisper.cpp.git
+RUN git clone https://github.com/ggml-org/whisper.cpp.git
 WORKDIR /app/whisper.cpp
 RUN mkdir build && cd build && \
     cmake .. -DWHISPER_CUDA=ON && \

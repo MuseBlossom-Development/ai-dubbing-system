@@ -95,9 +95,14 @@ pretrained_models/
 CosyVoice/
 GPT-SoVITS/
 MuseTalk/
+MuseTalk_b/
+LatentSync/
+LatentSync_b/
 llama-cpp-python/
 whisper.cpp/
 gemma/
+sd-wav2lip-uhq/
+stable-diffusion-webui/
 
 # Cache directories
 __pycache__/
@@ -309,6 +314,12 @@ Cargo.lock
 # ====================================
 # Custom Project Files
 # ====================================
+
+# Test files and documents
+test/
+temp_gen/
+*.docx
+*.doc
 
 # Custom configuration backups
 vad_config.json.bak

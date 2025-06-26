@@ -1,0 +1,17 @@
+name: cosyvoice
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - gcc_linux-64
+  - gxx_linux-64
+  - pytorch-cuda=12.1
+  - tensorboard==2.13.0
+  - numpy==1.25.2
+  - scipy
+  - x264
+  - ffmpeg
+  - opencv=4.8.1
+  - filelock==3.18.0
+prefix: /home/museblossom4090/miniconda3/envs/cosyvoice

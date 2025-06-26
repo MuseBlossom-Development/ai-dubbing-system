@@ -1,6 +1,7 @@
 name: deepvoice-stt
 channels:
   - conda-forge
+  - pytorch-nightly
   - pytorch
   - nvidia
   - defaults
@@ -9,11 +10,11 @@ dependencies:
   # Python Runtime
   - python>=3.9,<3.12
   
-  # Core Deep Learning
-  - pytorch>=2.0.0
-  - torchaudio>=2.0.0
-  - torchvision>=0.15.0
-  - cudatoolkit=11.8  # CUDA support
+  # Core Deep Learning - using nightly builds
+  - pytorch-nightly
+  - torchvision-nightly
+  - torchaudio-nightly
+  - pytorch-cuda=12.8  # CUDA 12.8 support
   
   # Audio & Video Processing
   - ffmpeg>=5.0.0

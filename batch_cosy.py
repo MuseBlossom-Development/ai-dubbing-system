@@ -36,7 +36,6 @@ def cleanup_memory(device):
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
         logging.debug("CUDA cache cleared")
-    # CPU doesn't need explicit cleanup
 
 
 def cleanup_cosyvoice_model():
@@ -91,6 +90,127 @@ def cleanup_cosyvoice_model():
             logging.info("🔧 CUDA 메모리 캐시 정리 완료")
 
 
+def synthesize_with_speed_control(cosy, text, prompt_text, prompt_wav, target_speed=1.0,
+                                  target_language='korean', instruct_command=None):
+    """
+    CosyVoice2의 네이티브 speed 파라미터를 활용한 음성 합성
+
+    Args:
+        cosy: CosyVoice2 모델
+        text: 합성할 텍스트
+        prompt_text: 프롬프트 텍스트
+        prompt_wav: 프롬프트 오디오
+        target_speed: 목표 속도 (0.5 = 매우느림, 1.0 = 보통, 1.5 = 빠름, 2.0 = 매우빠름)
+        target_language: 타겟 언어
+        instruct_command: 사용자 정의 instruct 명령어 (보조적 사용)
+
+    Returns:
+        합성된 오디오 텐서
+    """
+    logging.info(f"  🎵 네이티브 속도 제어 합성: {target_speed:.1f}배 속도")
+
+    # 1단계: Zero-shot with native speed control (주 방식)
+    try:
+        results = cosy.inference_zero_shot(
+            text,
+            prompt_text,
+            prompt_wav,
+            "",
+            stream=True,
+            speed=target_speed,  # CosyVoice2의 네이티브 speed 파라미터 활용
+            text_frontend=True
+        )
+
+        if results is None:
+            logging.error("  ❌ Zero-shot 속도 제어 합성 실패")
+            return None
+
+        # 결과 연결
+        result_list = list(results)
+        if not result_list:
+            logging.error("  ❌ Zero-shot 속도 제어 합성 결과 없음")
+            return None
+
+        combined_audio = []
+        for out in result_list:
+            if 'tts_speech' in out:
+                speech = out['tts_speech']
+                if speech.device.type != 'cpu':
+                    speech = speech.cpu()
+                combined_audio.append(speech)
+
+        if not combined_audio:
+            logging.error("  ❌ 유효한 Zero-shot 속도 제어 합성 결과 없음")
+            return None
+
+        final_audio = torch.cat(combined_audio, dim=1)
+        duration = final_audio.size(1) / 24000
+        logging.info(f"  ✅ Zero-shot 네이티브 속도 제어 완료: {duration:.2f}초")
+
+        return final_audio
+
+    except Exception as e:
+        logging.warning(f"  ⚠️ Zero-shot 네이티브 속도 제어 실패, Instruct2로 대체: {e}")
+
+    # 2단계: Instruct2 with speed control (대체 방식)
+    if instruct_command is None:
+        if target_speed <= 0.7:
+            base_command = '매우 천천히 말해'
+        elif target_speed <= 0.9:
+            base_command = '천천히 말해'
+        elif target_speed >= 1.3:
+            base_command = '빠르게 말해'
+        elif target_speed >= 1.6:
+            base_command = '매우 빠르게 말해'
+        else:
+            base_command = '자연스럽게 말해'
+
+        instruct_command = get_language_specific_instruct_command(base_command, target_language)
+
+    logging.info(f"  💬 대체 Instruct 명령어: '{instruct_command}'")
+
+    try:
+        results = cosy.inference_instruct2(
+            text,
+            instruct_command,
+            prompt_wav,
+            stream=True,
+            speed=target_speed  # Instruct2에서도 네이티브 speed 파라미터 함께 사용
+        )
+
+        if results is None:
+            logging.error("  ❌ Instruct2 속도 제어 합성 실패")
+            return None
+
+        # 결과 연결
+        result_list = list(results)
+        if not result_list:
+            logging.error("  ❌ Instruct2 속도 제어 합성 결과 없음")
+            return None
+
+        combined_audio = []
+        for out in result_list:
+            if 'tts_speech' in out:
+                speech = out['tts_speech']
+                if speech.device.type != 'cpu':
+                    speech = speech.cpu()
+                combined_audio.append(speech)
+
+        if not combined_audio:
+            logging.error("  ❌ 유효한 Instruct2 속도 제어 합성 결과 없음")
+            return None
+
+        final_audio = torch.cat(combined_audio, dim=1)
+        duration = final_audio.size(1) / 24000
+        logging.info(f"  ✅ Instruct2 속도 제어 완료: {duration:.2f}초")
+
+        return final_audio
+
+    except Exception as e:
+        logging.error(f"  ❌ Instruct2 속도 제어 합성 중 오류: {e}")
+        return None
+
+
 # Gradio 앱의 postprocess 함수
 def postprocess(speech: torch.Tensor,
                 top_db: int = 60,
@@ -113,7 +233,7 @@ def postprocess(speech: torch.Tensor,
 def load_wav_resample(path: str, target_sr: int = 16000, min_duration: float = 3.0) -> torch.Tensor:
     """
     오디오 로드 및 리샘플링 (CosyVoice 3초 제약 우회)
-    
+
     Args:
         path: 오디오 파일 경로
         target_sr: 목표 샘플링 레이트
@@ -143,11 +263,11 @@ def load_wav_resample(path: str, target_sr: int = 16000, min_duration: float = 3
 def optimize_prompt_audio(prompt_wav: torch.Tensor, target_sr: int = 16000) -> torch.Tensor:
     """
     프롬프트 오디오 최적화 - 늘어짐 방지
-    
+
     Args:
         prompt_wav: 프롬프트 오디오 텐서
         target_sr: 샘플링 레이트
-    
+
     Returns:
         최적화된 프롬프트 오디오
     """
@@ -166,7 +286,7 @@ def smart_synthesis_with_length_control(cosy, text, prompt_text, prompt_wav_proc
                                         target_language, base_instruct_command, final_speed_ratio):
     """
     길이를 고려한 스마트 합성: Zero-shot이 너무 길면 Instruct2로 재합성
-    
+
     Args:
         cosy: CosyVoice2 모델 인스턴스
         text: 합성할 텍스트
@@ -176,7 +296,7 @@ def smart_synthesis_with_length_control(cosy, text, prompt_text, prompt_wav_proc
         target_language: 타겟 언어
         base_instruct_command: 기본 instruct 명령어
         final_speed_ratio: 속도 비율
-    
+
     Returns:
         tuple: (선택된 오디오, 사용된 방법, 실제 길이)
     """
@@ -235,7 +355,7 @@ def smart_synthesis_with_length_control(cosy, text, prompt_text, prompt_wav_proc
 
         return zero_shot_audio, "zero_shot", zero_shot_duration
 
-    # 3단계: Zero-shot이 너무 길면 Instruct2로 빠르게 말하기 시도
+    # 3단계: Zero-shot이 너무 길면 Instruct2로 재시도
     logging.info(f"  ⚠️ Zero-shot 너무 김 (비율: {duration_ratio:.2f}) - Instruct2로 재시도")
 
     # 빠르게 말하기 명령어 생성
@@ -288,12 +408,10 @@ def smart_synthesis_with_length_control(cosy, text, prompt_text, prompt_wav_proc
 
     instruct_audio = torch.cat(instruct_combined_audio, dim=1)
     instruct_duration = instruct_audio.size(1) / 24000
-    instruct_ratio = instruct_duration / original_duration
-
-    logging.info(f"  → Instruct2 결과: {instruct_duration:.2f}s (비율: {instruct_ratio:.2f})")
+    logging.info(f"  → Instruct2 결과: {instruct_duration:.2f}s")
 
     # 4단계: 더 나은 결과 선택
-    if instruct_ratio <= duration_ratio:
+    if instruct_duration <= zero_shot_duration:
         # Instruct2가 더 나음 - Zero-shot 메모리 해제
         logging.info(f"  ✅ Instruct2 결과 선택 (더 적절한 길이)")
         del zero_shot_audio  # 명시적 메모리 해제
@@ -357,10 +475,10 @@ def analyze_audio_mood(audio_path: str) -> str:
 def preprocess_text_for_synthesis(text: str) -> str:
     """
     합성용 텍스트 전처리 - 늘어짐 방지
-    
+
     Args:
         text: 원본 텍스트
-    
+
     Returns:
         전처리된 텍스트
     """
@@ -400,28 +518,28 @@ LANGUAGE_CONFIGS = {
         'code': 'en',
         'name': 'English',
         'voice_style': 'natural',
-        'speech_rate': 1.1,
-        'phoneme_emphasis': 0.9
+        'speech_rate': 1.2,
+        'phoneme_emphasis': 0.8
     },
     'chinese': {
         'code': 'zh',
         'name': '中文',
         'voice_style': 'natural',
-        'speech_rate': 1.0,
-        'phoneme_emphasis': 1.0
+        'speech_rate': 1.2,
+        'phoneme_emphasis': 0.8
     },
     'japanese': {
         'code': 'ja',
         'name': '日本語',
         'voice_style': 'natural',
-        'speech_rate': 1.1,
-        'phoneme_emphasis': 1.0
+        'speech_rate': 1.2,
+        'phoneme_emphasis': 0.8
     },
     'korean': {
         'code': 'ko',
         'name': '한국어',
         'voice_style': 'natural',
-        'speech_rate': 1.0,
+        'speech_rate': 1.1,
         'phoneme_emphasis': 1.0
     }
 }
@@ -441,8 +559,7 @@ def detect_text_language(text: str) -> str:
     english_chars = len([c for c in non_space_chars if ord(c) < 128])
     korean_chars = len([c for c in non_space_chars if 0xAC00 <= ord(c) <= 0xD7A3])
     chinese_chars = len([c for c in non_space_chars if 0x4E00 <= ord(c) <= 0x9FFF])
-    japanese_chars = len([c for c in non_space_chars if
-                          (0x3040 <= ord(c) <= 0x309F)])  # 히라가나 + 가타카나
+    japanese_chars = len([c for c in non_space_chars if (0x3040 <= ord(c) <= 0x309F)])  # 히라가나 + 가타카나
 
     total_chars = len(non_space_chars)
 
@@ -521,43 +638,84 @@ def preprocess_text_by_language(text: str, target_language: str) -> str:
 
 def get_language_specific_instruct_command(base_command: str, target_language: str) -> str:
     """
-    언어별 특성에 맞는 instruct 명령어 생성
+    언어별 특성에 맞는 instruct 명령어 생성 (CosyVoice2 논문 기반 확장)
     """
-    lang_config = LANGUAGE_CONFIGS.get(target_language, LANGUAGE_CONFIGS['korean'])
-
-    # 언어별 명령어 매핑
+    # CosyVoice2에서 지원하는 더 다양한 속도 및 스타일 제어 명령어
     if target_language == 'english':
         return {
-            '자연스럽게 말해': 'Speak naturally and clearly',
+            # 속도 제어
+            '자연스럽게 말해': 'Speak naturally with normal pace',
             '활기차게 말해': 'Speak with energy and enthusiasm',
-            '차분하게 말해': 'Speak calmly and steadily',
-            '감정적으로 말해': 'Speak with emotion and feeling',
+            '차분하게 말해': 'Speak calmly and peacefully',
+            '감정적으로 말해': 'Speak with strong emotion',
             '천천히 말해': 'Speak slowly and clearly',
-            '빠르게 말해': 'Speak quickly'
+            '빠르게 말해': 'Speak quickly and briskly',
+            '매우 천천히 말해': 'Speak very slowly with clear articulation',
+            '매우 빠르게 말해': 'Speak very quickly but distinctly',
+            # 추가 스타일 제어 (CosyVoice2 논문 기반)
+            '부드럽게 말해': 'Speak softly and gently',
+            '힘차게 말해': 'Speak with strong voice and power',
+            '속삭이듯 말해': 'Speak in a whisper',
+            '또렷하게 말해': 'Speak with clear pronunciation',
+            '리듬감 있게 말해': 'Speak with good rhythm and flow'
         }.get(base_command, base_command)
 
     elif target_language == 'chinese':
         return {
+            # 속도 제어
             '자연스럽게 말해': '自然地说话',
             '활기차게 말해': '充满活力地说话',
             '차분하게 말해': '平静地说话',
             '감정적으로 말해': '富有感情地说话',
             '천천히 말해': '慢慢地说话',
-            '빠르게 말해': '快速地说'
+            '빠르게 말해': '快速地说话',
+            '매우 천천히 말해': '非常慢地说话',
+            '매우 빠르게 말해': '非常快地说话',
+            # 추가 스타일 제어
+            '부드럽게 말해': '温柔地说话',
+            '힘차게 말해': '有力地说话',
+            '속삭이듯 말해': '轻声说话',
+            '또렷하게 말해': '清楚地说话',
+            '리듬감 있게 말해': '有节奏地说话'
         }.get(base_command, base_command)
 
     elif target_language == 'japanese':
         return {
+            # 속도 제어
             '자연스럽게 말해': '自然に話してください',
             '활기차게 말해': '元気よく話してください',
             '차분하게 말해': '落ち着いて話してください',
             '감정적으로 말해': '感情豊かに話してください',
             '천천히 말해': 'ゆっくりと話してください',
-            '빠르게 말해': '速く話してください'
+            '빠르게 말해': '速く話してください',
+            '매우 천천히 말해': '非常にゆっくり話してください',
+            '매우 빠르게 말해': '非常に速く話してください',
+            # 추가 스타일 제어
+            '부드럽게 말해': '優しく話してください',
+            '힘차게 말해': '力強く話してください',
+            '속삭이듯 말해': '囁くように話してください',
+            '또렷하게 말해': 'はっきりと話してください',
+            '리듬감 있게 말해': 'リズムよく話してください'
         }.get(base_command, base_command)
 
-    else:  # default to Korean
-        return base_command
+    else:  # Korean (default)
+        return {
+            # 속도 제어
+            '자연스럽게 말해': '자연스럽게 말해',
+            '활기차게 말해': '활기차게 말해',
+            '차분하게 말해': '차분하게 말해',
+            '감정적으로 말해': '감정적으로 말해',
+            '천천히 말해': '천천히 말해',
+            '빠르게 말해': '빠르게 말해',
+            '매우 천천히 말해': '매우 천천히 말해',
+            '매우 빠르게 말해': '매우 빠르게 말해',
+            # 추가 스타일 제어 (CosyVoice2 논문 기반)
+            '부드럽게 말해': '부드럽게 말해',
+            '힘차게 말해': '힘차게 말해',
+            '속삭이듯 말해': '속삭이듯 말해',
+            '또렷하게 말해': '또렷하게 말해',
+            '리듬감 있게 말해': '리듬감 있게 말해'
+        }.get(base_command, base_command)
 
 
 # 배치 합성 함수
@@ -630,16 +788,32 @@ def main(audio_dir, prompt_text_dir, text_dir, out_dir, model_path=LOCAL_COSYVOI
     # 파일 매칭 개선: 실제 파일명 패턴에 맞게 매칭
     matched_files = []
 
-    for audio_file in audio_files:
+    for i, audio_file in enumerate(audio_files):
         # 오디오 파일명에서 기본 이름 추출 (예: vocal_video22_extracted.wav_10_001.wav -> vocal_video22_extracted.wav_10_001)
         audio_base = os.path.splitext(audio_file)[0]
 
+        # 안전한 파일명 분할 처리
+        try:
+            if '_' in audio_base:
+                # "조용석_1m_001"에서 "조용석_1m"와 "001" 분리
+                parts = audio_base.rsplit('_', 1)
+                if len(parts) >= 2 and parts[-1].isdigit():
+                    audio_base = '_'.join(parts[:-1])  # 마지막 숫자 부분 제외한 모든 부분
+                    segment_num = parts[-1]  # 마지막 숫자 부분
+                else:
+                    segment_num = f"{i:03d}"
+            else:
+                segment_num = f"{i:03d}"
+        except Exception as e:
+            logging.warning(f"파일명 처리 오류 ({audio_file}): {e}, 기본값 사용")
+            segment_num = f"{i:03d}"
+
         # 프롬프트 텍스트 파일 찾기 (예: vocal_video22_extracted.wav_10_001.ko.txt)
-        prompt_file = f"{audio_base}.ko.txt"
+        prompt_file = f"{audio_base}_{segment_num}.ko.txt"
         prompt_file_path = os.path.join(prompt_text_dir, prompt_file)
 
         # 대상 텍스트 파일 찾기 (예: vocal_video22_extracted.wav_10_001.ko.txt)
-        target_file = f"{audio_base}.ko.txt"
+        target_file = f"{audio_base}_{segment_num}.ko.txt"
         target_file_path = os.path.join(text_dir, target_file)
 
         # 파일 존재 여부 확인
@@ -769,22 +943,6 @@ def main(audio_dir, prompt_text_dir, text_dir, out_dir, model_path=LOCAL_COSYVOI
         if prompt_text != original_prompt_text:
             logging.info(f"  → 프롬프트 텍스트 전처리: '{original_prompt_text[:20]}...' → '{prompt_text[:20]}...'")
 
-        # 텍스트 언어 감지 및 전처리
-        detected_lang = detect_text_language(text)
-        if detected_lang != target_language:
-            logging.warning(f"  ⚠️ 언어 불일치 감지: 예상={target_language}, 감지={detected_lang}")
-
-        # 타겟 언어에 맞는 전처리 적용
-        text = preprocess_text_by_language(text, target_language)
-        prompt_text = preprocess_text_by_language(prompt_text, 'korean')  # 프롬프트는 항상 한국어
-
-        # 전처리 결과 로깅
-        if text != original_text:
-            logging.info(f"  → [{target_language}] 텍스트 전처리: '{original_text[:30]}...' → '{text[:30]}...'")
-        if prompt_text != original_prompt_text:
-            logging.info(
-                f"  → [{target_language}] 프롬프트 텍스트 전처리: '{original_prompt_text[:20]}...' → '{prompt_text[:20]}...'")
-
         # 파일명에서 기본 이름과 세그먼트 번호 추출
         base_name = os.path.splitext(awav)[0]  # 예: "조용석_1m_001"
         if '_' in base_name:
@@ -800,141 +958,101 @@ def main(audio_dir, prompt_text_dir, text_dir, out_dir, model_path=LOCAL_COSYVOI
             audio_base = base_name
             segment_num = f"{i:03d}"
 
-        logging.info(f"  → 원본 길이: {original_duration:.2f}s")
+        logging.info(f"  → [{target_language}] 프롬프트 오디오 길이: {prompt_wav.size(1) / 16000:.2f}s")
 
-        try:
-            # Prompt 오디오 전처리 (WebUI와 동일)
+        # 합성 전 필수 조건 재확인
+        if prompt_wav is None or prompt_wav.size(1) == 0:
+            logging.error(f"  ❌ 처리된 프롬프트 오디오가 비어 있습니다")
+            continue
+        if not text.strip() or not prompt_text.strip():
+            logging.error(f"  ❌ 처리된 텍스트가 비어 있습니다")
+            continue
+
+        # 언어별 속도 조정 적용
+        lang_config = LANGUAGE_CONFIGS.get(target_language, LANGUAGE_CONFIGS['korean'])
+        base_speed_ratio = lang_config['speech_rate']
+
+        # Zero-shot 및 Instruct2 합성
+        audio_result, method_used, duration = smart_synthesis_with_length_control(
+            cosy,
+            text,
+            prompt_text,
+            prompt_wav,
+            original_duration,
+            target_language,
+            manual_command if manual_command else '자연스럽게 말해',
+            base_speed_ratio
+        )
+
+        if audio_result is not None:
+            logging.info(f"  ✅ [{target_language}] 최종 결과: {duration:.2f}s (방법: {method_used})")
+        else:
+            logging.error(f"  ❌ [{target_language}] 합성 결과 없음")
+            continue
+
+        # 결과 저장
+        if method_used == "instruct2_fast":
             try:
-                prompt_wav_processed = postprocess(prompt_wav)
+                logging.info(f"  → [{target_language}] Instruct2 결과 저장 시작...")
+
+                # Instruct2 디렉토리 확실히 생성
+                if not os.path.exists(instruct_dir):
+                    os.makedirs(instruct_dir, exist_ok=True)
+                    logging.info(f"  → Instruct2 출력 디렉토리 생성: {instruct_dir}")
+
+                # 안전한 파일명 생성
+                safe_name = sanitize_filename(f"{audio_base}_{segment_num}_instruct.wav")
+                save_path = os.path.join(instruct_dir, safe_name)
+
+                try:
+                    torchaudio.save(save_path, audio_result, 24000)
+                    final_duration = audio_result.size(1) / 24000
+
+                    # 파일 저장 확인
+                    if os.path.exists(save_path):
+                        file_size = os.path.getsize(save_path)
+                        logging.info(
+                            f"    ✅ Instruct2 저장 완료 ➜ {safe_name} ({final_duration:.2f}초, {file_size} 바이트)")
+                    else:
+                        logging.error(f"    ❌ 파일이 저장되지 않았습니다: {save_path}")
+
+                except Exception as save_error:
+                    logging.error(f"    ❌ Instruct2 파일 저장 실패: {save_error}")
             except Exception as e:
-                logging.error(f"  ❌ 프롬프트 오디오 전처리 실패: {e}")
-                continue
+                logging.error(f"    ❌ [{target_language}] Instruct2 처리 실패: {e}")
+                import traceback
+                logging.error(f"    상세 오류: {traceback.format_exc()}")
+        else:
+            # Zero-shot 결과 저장
+            try:
+                logging.info(f"  → [{target_language}] Zero-shot 결과 저장 시작...")
 
-            # 프롬프트 오디오 최적화 비활성화 (음성 클로닝 품질 보존)
-            logging.info(f"  → [{target_language}] 프롬프트 오디오 길이: {prompt_wav_processed.size(1) / 16000:.2f}s (원본 길이 보존)")
+                # 안전한 파일명 생성
+                safe_name = sanitize_filename(f"{audio_base}_{segment_num}.wav")
+                save_path = os.path.join(zero_shot_dir, safe_name)
 
-            # 합성 전 필수 조건 재확인
-            if prompt_wav_processed is None or prompt_wav_processed.size(1) == 0:
-                logging.error(f"  ❌ 처리된 프롬프트 오디오가 비어 있습니다")
-                continue
-            if not text.strip() or not prompt_text.strip():
-                logging.error(f"  ❌ 처리된 텍스트가 비어 있습니다")
-                continue
+                # 디렉토리 확인 및 생성
+                if not os.path.exists(zero_shot_dir):
+                    os.makedirs(zero_shot_dir, exist_ok=True)
 
-            # 언어별 속도 조정 적용
-            lang_config = LANGUAGE_CONFIGS.get(target_language, LANGUAGE_CONFIGS['korean'])
-            base_speed_ratio = lang_config['speech_rate']
+                try:
+                    torchaudio.save(save_path, audio_result, 24000)
+                    final_duration = audio_result.size(1) / 24000
 
-            # 1단계: Zero-shot 합성 with language-specific adjustments
-            logging.info(f"  → [{target_language}] Zero-shot 합성 중... (기본 속도: {base_speed_ratio})")
+                    # 파일 저장 확인
+                    if os.path.exists(save_path):
+                        file_size = os.path.getsize(save_path)
+                        logging.info(
+                            f"    ✅ Zero-shot 저장 완료 ➜ {safe_name} ({final_duration:.2f}초, {file_size} 바이트)")
+                    else:
+                        logging.error(f"    ❌ 파일이 저장되지 않았습니다: {save_path}")
 
-            # Zero-shot 합성 with language-specific speed ratio
-            final_speed_ratio = base_speed_ratio
-            logging.info(f"  → [{target_language}] 최종 속도 조정: {final_speed_ratio:.2f}배")
-
-            # 언어별 Instruct 명령어 처리
-            if enable_instruct:
-                if manual_command:
-                    base_instruct_command = manual_command
-
-                else:
-                    try:
-                        base_instruct_command = analyze_audio_mood(wav_path)
-                    except Exception as e:
-                        logging.warning(f"  ⚠️ 오디오 분위기 분석 실패: {e}, 기본값 사용")
-                        base_instruct_command = "자연스럽게 말해"
-
-                # 타겟 언어에 맞는 명령어로 변환
-                instruct_command = get_language_specific_instruct_command(base_instruct_command, target_language)
-                logging.info(f"  → [{target_language}] 음성 스타일: '{base_instruct_command}' → '{instruct_command}'")
-            else:
-                instruct_command = None
-
-            # 스마트 합성 수행
-            synthesized_audio, method_used, final_duration = smart_synthesis_with_length_control(
-                cosy,
-                text,
-                prompt_text,
-                prompt_wav_processed,
-                original_duration,
-                target_language,
-                instruct_command,
-                final_speed_ratio
-            )
-
-            if synthesized_audio is not None:
-                # Zero-shot 결과 저장
-                if method_used == "zero_shot" or method_used == "zero_shot_final" or method_used == "zero_shot_fallback":
-                    try:
-                        logging.info(f"  → [{target_language}] Zero-shot 결과 저장 시작...")
-
-                        # 안전한 파일명 생성
-                        safe_name = sanitize_filename(f"{audio_base}_{segment_num}.wav")
-                        save_path = os.path.join(zero_shot_dir, safe_name)
-
-                        # 디렉토리 확인 및 생성
-                        if not os.path.exists(zero_shot_dir):
-                            os.makedirs(zero_shot_dir, exist_ok=True)
-
-                        try:
-                            torchaudio.save(save_path, synthesized_audio, 24000)
-                            final_duration = synthesized_audio.size(1) / 24000
-
-                            # 파일 저장 확인
-                            if os.path.exists(save_path):
-                                file_size = os.path.getsize(save_path)
-                                logging.info(
-                                    f"    ✅ Zero-shot 저장 완료 ➜ {safe_name} ({final_duration:.2f}초, {file_size} 바이트)")
-                            else:
-                                logging.error(f"    ❌ 파일이 저장되지 않았습니다: {save_path}")
-
-                        except Exception as save_error:
-                            logging.error(f"    ❌ torchaudio.save 실패: {save_error}")
-                    except Exception as save_error:
-                        logging.error(f"  ❌ [{target_language}] Zero-shot 저장 실패: {save_error}")
-                else:
-                    logging.info(f"  → [{target_language}] Zero-shot 결과가 Instruct2로 대체됨")
-
-                # Instruct2 결과 저장
-                if method_used == "instruct2_fast":
-                    try:
-                        logging.info(f"  → [{target_language}] Instruct2 결과 저장 시작...")
-
-                        # Instruct2 디렉토리 확실히 생성
-                        if not os.path.exists(instruct_dir):
-                            os.makedirs(instruct_dir, exist_ok=True)
-                            logging.info(f"  → Instruct2 출력 디렉토리 생성: {instruct_dir}")
-
-                        # 안전한 파일명 생성
-                        safe_name = sanitize_filename(f"{audio_base}_{segment_num}_instruct.wav")
-                        save_path = os.path.join(instruct_dir, safe_name)
-
-                        try:
-                            torchaudio.save(save_path, synthesized_audio, 24000)
-                            final_duration = synthesized_audio.size(1) / 24000
-
-                            # 파일 저장 확인
-                            if os.path.exists(save_path):
-                                file_size = os.path.getsize(save_path)
-                                logging.info(
-                                    f"    ✅ Instruct2 저장 완료 ➜ {safe_name} ({final_duration:.2f}초, {file_size} 바이트)")
-                            else:
-                                logging.error(f"    ❌ 파일이 저장되지 않았습니다: {save_path}")
-
-                        except Exception as save_error:
-                            logging.error(f"    ❌ Instruct2 파일 저장 실패: {save_error}")
-                    except Exception as e:
-                        logging.error(f"    ❌ [{target_language}] Instruct2 처리 실패: {e}")
-                        import traceback
-                        logging.error(f"    상세 오류: {traceback.format_exc()}")
-            else:
-                logging.error(f"  ❌ [{target_language}] 합성 결과가 없어 저장 건너뜀")
-
-        except Exception as e:
-            logging.error(f"[{target_language}] 파일 처리 오류 ({awav}/{txt}): {e}")
-            import traceback
-            logging.error(f"상세 오류: {traceback.format_exc()}")
-            logging.info("다음 파일로 이동 중...")
+                except Exception as save_error:
+                    logging.error(f"    ❌ torchaudio.save 실패: {save_error}")
+            except Exception as e:
+                logging.error(f"  ❌ [{target_language}] Zero-shot 저장 실패: {e}")
+                import traceback
+                logging.error(f"  상세 오류: {traceback.format_exc()}")
 
         # 메모리 정리 (각 파일 처리 후)
         cleanup_memory(device)

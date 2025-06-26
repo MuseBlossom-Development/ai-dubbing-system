@@ -133,7 +133,7 @@ def run_whisper_directory(output_dir: str, translation_settings=None):
     # 번역 설정 처리
     if translation_settings is None:
         translation_settings = {
-            'translation_length': 0.8,
+            'translation_length': 0.7,
             'quality_mode': 'balanced',
             'selected_languages': ['english']
         }
