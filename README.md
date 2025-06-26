@@ -9,7 +9,102 @@
 
 **이 저장소는 코드만 포함하고 있습니다.** 대용량 모델 파일(총 25GB+)은 Git에서 제외되어 있으므로 별도로 다운로드해야 합니다.
 
-## 🏗️ 시스템 아키텍처
+## 🐳 Docker Compose 마이그레이션 (NEW!)
+
+종속성 문제 해결을 위해 전체 파이프라인을 **마이크로서비스 아키텍처**로 전환했습니다.
+
+### 🏗️ 마이크로서비스 아키텍처
+
+```mermaid
+graph TB
+    subgraph "Docker Containers"
+        A[Input Files] --> B[Audio Processor Service<br/>:8005]
+        B --> C[Whisper STT Service<br/>:8001]
+        C --> D[Gemma Translator Service<br/>:8002]
+        D --> E[CosyVoice TTS Service<br/>:8003]
+        E --> F[Pipeline Orchestrator<br/>:8000]
+        F --> G[Web UI<br/>:7860]
+        
+        H[LatentSync Lipsync Service<br/>:8004] -.-> F
+        H -.-> I[Final Output]
+        F --> I
+    end
+    
+    subgraph "Shared Volumes"
+        J[/input]
+        K[/output] 
+        L[/temp]
+        M[/models]
+    end
+    
+    style H stroke-dasharray: 5 5
+    style H opacity: 0.7
+```
+
+### 📦 서비스 구성
+
+| 서비스명                      | 포트   | 역할          | GPU 사용 |
+|---------------------------|------|-------------|--------|
+| **whisper-stt**           | 8001 | 음성→텍스트 변환   | ✅      |
+| **gemma-translator**      | 8002 | 다국어 번역      | ❌      |
+| **cosyvoice-tts**         | 8003 | 텍스트→음성 합성   | ✅      |
+| **latentsync-lipsync**    | 8004 | 립싱크 처리 (선택) | ✅      |
+| **audio-processor**       | 8005 | 오디오/비디오 처리  | ❌      |
+| **pipeline-orchestrator** | 8000 | 파이프라인 제어    | ❌      |
+| **web-ui**                | 7860 | 웹 인터페이스     | ❌      |
+
+### 🚀 Quick Start (Docker Compose)
+
+#### 1. 브랜치 전환
+
+```bash
+git checkout docker-compose-migration
+```
+
+#### 2. 필수 디렉토리 및 모델 준비
+
+```bash
+# 디렉토리 생성
+mkdir -p {input,output,temp,config}
+
+# 모델 파일 다운로드 (기존과 동일)
+# - resources/ggml-large-v3-turbo.bin (Whisper)
+# - CosyVoice/pretrained_models/ (CosyVoice2)
+# - gemma/gemma-3-12b-it-q4_0.gguf (Gemma3)
+```
+
+#### 3. 립싱크 제외 버전 실행 (권장)
+
+```bash
+cd docker
+docker-compose -f docker-compose.no-lipsync.yml up --build
+```
+
+#### 4. 전체 버전 실행 (립싱크 포함)
+
+```bash
+cd docker
+docker-compose up --build
+```
+
+#### 5. 서비스 상태 확인
+
+```bash
+# 전체 시스템 헬스체크
+curl http://localhost:8000/health
+
+# 개별 서비스 확인
+curl http://localhost:8001/health  # Whisper STT
+curl http://localhost:8002/health  # Gemma Translator  
+curl http://localhost:8003/health  # CosyVoice TTS
+curl http://localhost:8005/health  # Audio Processor
+```
+
+#### 6. 웹 UI 접속
+
+브라우저에서 `http://localhost:7860` 접속
+
+## 🏗️ 시스템 아키텍처 (Legacy)
 
 ```mermaid
 graph TB
@@ -468,4 +563,3 @@ python batch_cosy.py \
 ---
 
 **⚠️ 중요 고지사항**: 이 프로젝트는 여러 오픈소스 및 상용 라이선스 구성 요소를 포함합니다. 상업적 사용 전 반드시 각 구성 요소의 라이선스를 검토하고 법무팀과 상담하시기 바랍니다.
-

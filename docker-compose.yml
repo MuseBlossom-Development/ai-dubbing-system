@@ -1,0 +1,186 @@
+version: '3.8'
+
+services:
+  # 1. Whisper STT 서비스
+  whisper-stt:
+    build:
+      context: ./docker/whisper
+      dockerfile: Dockerfile
+    container_name: deepvoice-whisper-stt
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./temp:/app/temp
+    environment:
+      - MODEL_SIZE=large-v3-turbo
+      - LANGUAGE=ko
+      - VAD_THRESHOLD=0.6
+    ports:
+      - "8001:8000"
+    networks:
+      - deepvoice-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+  # 2. Gemma3 번역 서비스
+  gemma-translator:
+    build:
+      context: ./docker/gemma
+      dockerfile: Dockerfile
+    container_name: deepvoice-gemma-translator
+    volumes:
+      - ./output:/app/output
+      - ./temp:/app/temp
+      - ./gemma:/app/models
+    environment:
+      - MODEL_PATH=/app/models/gemma-3-12b-it-q4_0.gguf
+      - MAX_TOKENS=4096
+      - TEMPERATURE=0.2
+    ports:
+      - "8002:8000"
+    networks:
+      - deepvoice-network
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 8G
+
+  # 3. CosyVoice2 TTS 서비스
+  cosyvoice-tts:
+    build:
+      context: ./docker/cosyvoice
+      dockerfile: Dockerfile
+    container_name: deepvoice-cosyvoice-tts
+    volumes:
+      - ./output:/app/output
+      - ./temp:/app/temp
+      - ./CosyVoice/pretrained_models:/app/models
+    environment:
+      - MODEL_NAME=CosyVoice2-0.5B
+      - SAMPLE_RATE=24000
+      - ENABLE_ZERO_SHOT=true
+    ports:
+      - "8003:8000"
+    networks:
+      - deepvoice-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+  # 4. LatentSync 립싱크 서비스 (선택사항)
+  latentsync-lipsync:
+    build:
+      context: ./docker/latentsync
+      dockerfile: Dockerfile
+    container_name: deepvoice-latentsync-lipsync
+    volumes:
+      - ./output:/app/output
+      - ./temp:/app/temp
+      - ./LatentSync/checkpoints:/app/checkpoints
+      - ./LatentSync/checkpoints_v1.6:/app/checkpoints_v1.6
+    environment:
+      - MODEL_VERSION=1.6
+      - INFERENCE_STEPS=30
+      - GUIDANCE_SCALE=1.5
+      - ENABLE_DEEPCACHE=true
+    ports:
+      - "8004:8000"
+    networks:
+      - deepvoice-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+
+  # 5. 오디오/비디오 처리 서비스
+  audio-processor:
+    build:
+      context: ./docker/audio-processor
+      dockerfile: Dockerfile
+    container_name: deepvoice-audio-processor
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./temp:/app/temp
+    environment:
+      - FFMPEG_THREADS=4
+      - ENABLE_GPU_ACCELERATION=true
+    ports:
+      - "8005:8000"
+    networks:
+      - deepvoice-network
+
+  # 6. 파이프라인 오케스트레이터 (메인 제어 서비스)
+  pipeline-orchestrator:
+    build:
+      context: ./docker/orchestrator
+      dockerfile: Dockerfile
+    container_name: deepvoice-orchestrator
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./temp:/app/temp
+      - ./config:/app/config
+    environment:
+      - WHISPER_SERVICE_URL=http://whisper-stt:8000
+      - TRANSLATOR_SERVICE_URL=http://gemma-translator:8000
+      - TTS_SERVICE_URL=http://cosyvoice-tts:8000
+      - LIPSYNC_SERVICE_URL=http://latentsync-lipsync:8000
+      - AUDIO_PROCESSOR_URL=http://audio-processor:8000
+      - ENABLE_LIPSYNC=true
+      - PIPELINE_MODE=complete
+    ports:
+      - "8000:8000"
+    depends_on:
+      - whisper-stt
+      - gemma-translator
+      - cosyvoice-tts
+      - audio-processor
+    networks:
+      - deepvoice-network
+
+  # 7. Web UI (선택사항)
+  web-ui:
+    build:
+      context: ./docker/webui
+      dockerfile: Dockerfile
+    container_name: deepvoice-webui
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+    environment:
+      - ORCHESTRATOR_URL=http://pipeline-orchestrator:8000
+      - ENABLE_REALTIME_LOG=true
+    ports:
+      - "7860:7860"
+    depends_on:
+      - pipeline-orchestrator
+    networks:
+      - deepvoice-network
+
+networks:
+  deepvoice-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  shared-storage:
+    driver: local
+  model-cache:
+    driver: local
